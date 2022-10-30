@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package MessageV1;
+
+option go_package = "../Message";
+
+message Message {
+  Header header = 2;
+  Body body = 3;
+}
+
+message Header {
+  string srcKey = 1;
+  int64 srcApi = 2;
+  string distKey = 3;
+  string distApi = 4;
+  int32 MType = 5;
+}
+
+message Body {
+  int32 StateCode = 1;
+  bytes Data = 2;
+}
