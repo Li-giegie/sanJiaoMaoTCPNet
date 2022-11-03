@@ -1,4 +1,4 @@
-module sanJiaoMaoTCPNet
+module github.com/Li-jiejie/sanJiaoMaoTCPNet
 
 go 1.18
 
