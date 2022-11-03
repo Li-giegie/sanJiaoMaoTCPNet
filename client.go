@@ -2,8 +2,8 @@ package sanJiaoMaoTCPNet
 
 import (
 	"errors"
-	"github.com/Li-jiejie/sanJiaoMaoTCPNet/Message"
-	"github.com/Li-jiejie/sanJiaoMaoTCPNet/utils"
+	"github.com/Li-giegie/sanJiaoMaoTCPNet/Message"
+	"github.com/Li-giegie/sanJiaoMaoTCPNet/utils"
 	"io"
 	"log"
 	"math/rand"

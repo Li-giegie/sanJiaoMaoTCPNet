@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/Li-jiejie/sanJiaoMaoTCPNet/Message"
+	"github.com/Li-giegie/sanJiaoMaoTCPNet/Message"
 	"google.golang.org/protobuf/proto"
 	"io"
 	"net"
