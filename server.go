@@ -10,11 +10,6 @@ import (
 	"time"
 )
 
-const (
-	MSGSTATE_CLOSE byte = 0
-	MSGSTATe_KEEP  byte = 1
-)
-
 type Server struct {
 	Key  string
 	ip   net.IP
@@ -96,6 +91,9 @@ func (s *Server) authentication(msg *Message.Message, ip string) error {
 	// 3.无认证过程直接通过 有认证过程执行自定义认证过程
 	func1 := s.AuthenticationHandle
 	if func1 == nil {
+		if string(msg.Body.Data) != defaultAuthenticationText {
+			return errors.New("认证失败 服务端无认证处理函数")
+		}
 		return nil
 	}
 
@@ -201,6 +199,7 @@ func (s *Server) write(conn *net.TCPConn, msg *Message.Message) error {
 
 	if err != nil {
 		log.Println("server write err:", err)
+		conn.Close()
 	}
 
 	if msg.Body.StateCode == 0 {
@@ -215,4 +214,18 @@ func (c *Server) UnMarshalMsg(r io.Reader) (*Message.Message, error) {
 
 func (c *Server) MarshalMsg(msg *Message.Message) ([]byte, error) {
 	return utils.Marshal(msg)
+}
+
+func (c *Server) AddHandlerFunc(api string, handle func(msg *Message.Message)) {
+	if api == "" {
+		log.Println("AddHandlerFunc err：api不能为空！")
+		return
+	}
+
+	_, ok := c.HandlerFunc[api]
+	if ok {
+		log.Println("AddHandlerFunc err：api已存在！")
+		return
+	}
+	c.HandlerFunc[api] = handle
 }

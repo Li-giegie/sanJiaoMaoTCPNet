@@ -2,6 +2,7 @@ package sanJiaoMaoTCPNet
 
 import (
 	"errors"
+	"fmt"
 	"github.com/Li-giegie/sanJiaoMaoTCPNet/Message"
 	"github.com/Li-giegie/sanJiaoMaoTCPNet/utils"
 	"io"
@@ -36,9 +37,11 @@ type Client struct {
 	cleanMemoryFragment int
 
 	AuthenticationText []byte
+
+	PushHanderFun func(msg *Message.Message)
 }
 
-func NewClientV2(adderss, srckey string) *Client {
+func NewClient(remoteAdderss, srckey string) *Client {
 
 	var cli = Client{
 		srcKey:              srckey,
@@ -46,20 +49,21 @@ func NewClientV2(adderss, srckey string) *Client {
 		HanderFun:           map[string]func(res Responser, msg *Message.Message){},
 		responeMsg:          map[int64]chan *Message.Message{},
 		cleanMemoryFragment: 1000,
-		AuthenticationText:  []byte("hello"),
+		AuthenticationText:  []byte(defaultAuthenticationText),
 	}
-
-	cli.ip, cli.prot, _ = utils.ParseAdderss(adderss)
+	fmt.Println(remoteAdderss)
+	cli.ip, cli.prot, _ = utils.ParseAdderss(remoteAdderss)
 
 	return &cli
 }
 
 func (c *Client) Connect(AuthenticationText ...string) error {
+
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	var err error
 
-	if c.conn, err = net.DialTCP("tcp", &net.TCPAddr{net.ParseIP("0.0.0.0"), r.Intn(30000) + 2000, ""}, &net.TCPAddr{c.ip, c.prot, ""}); err != nil {
+	if c.conn, err = net.DialTCP("tcp", &net.TCPAddr{net.IP{0, 0, 0, 0}, r.Intn(30000) + 2000, ""}, &net.TCPAddr{c.ip, c.prot, ""}); err != nil {
 		return err
 	}
 
@@ -80,7 +84,6 @@ func (c *Client) Connect(AuthenticationText ...string) error {
 	return err
 }
 
-//读取消息
 func (c *Client) read() {
 	var msg *Message.Message
 	var err error
@@ -108,7 +111,7 @@ func (c *Client) read() {
 		case 1:
 			res, ok := c.responeMsg[msg.Header.SrcApi]
 			if !ok {
-				c.PushMsg(msg)
+				c.pushMsg(msg)
 				continue
 			}
 			res <- msg
@@ -119,8 +122,11 @@ func (c *Client) read() {
 	c.conn.Close()
 }
 
-func (c *Client) Request(message *Message.Message) (*Message.Message, error) {
+func (c *Client) Request(message *Message.Message, timeOut ...time.Duration) (*Message.Message, error) {
 
+	if timeOut == nil {
+		timeOut = []time.Duration{c.TimeOut}
+	}
 	var cReq = make(chan *Message.Message)
 
 	c.responeMsg[message.Header.SrcApi] = cReq
@@ -142,7 +148,7 @@ func (c *Client) Request(message *Message.Message) (*Message.Message, error) {
 
 	case res = <-c.responeMsg[message.Header.SrcApi]:
 		return res, nil
-	case <-time.After(time.Second * c.TimeOut):
+	case <-time.After(time.Second * timeOut[0]):
 		return nil, errors.New(" request time out 请求超时")
 	}
 
@@ -171,6 +177,20 @@ func (c *Client) MarshalMsg(msg *Message.Message) ([]byte, error) {
 	return utils.Marshal(msg)
 }
 
-func (c Client) PushMsg(msg *Message.Message) {
-	log.Println("client:推送消息 ", msg.String())
+func (c *Client) pushMsg(msg *Message.Message) {
+
+	v := c.PushHanderFun
+
+	if v == nil {
+		log.Println("push message:", msg.String())
+		return
+	}
+
+	v(msg)
+
 }
+
+//func (c *Client) request(distKey,distApi string ,data []byte) {
+//	msg := Message.NewRequestMsg(c.srcKey,distKey,distApi,data)
+//
+//}
