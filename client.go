@@ -30,7 +30,7 @@ type Client struct {
 
 	TimeOut time.Duration
 
-	HanderFun map[string]func(res Responser, msg *Message.Message)
+	HandlerFunc map[string]func(res Responser, msg *Message.Message)
 
 	responeMsg map[int64]chan *Message.Message
 
@@ -46,7 +46,7 @@ func NewClient(remoteAdderss, srckey string) *Client {
 	var cli = Client{
 		srcKey:              srckey,
 		TimeOut:             3,
-		HanderFun:           map[string]func(res Responser, msg *Message.Message){},
+		HandlerFunc:         map[string]func(res Responser, msg *Message.Message){},
 		responeMsg:          map[int64]chan *Message.Message{},
 		cleanMemoryFragment: 1000,
 		AuthenticationText:  []byte(defaultAuthenticationText),
@@ -100,7 +100,7 @@ func (c *Client) read() {
 		switch msg.Header.MType {
 		// 响应请求
 		case 0:
-			hand, ok := c.HanderFun[msg.Header.DistApi]
+			hand, ok := c.HandlerFunc[msg.Header.DistApi]
 			if !ok {
 				msg.SetResponse(303, code[303])
 				c.Response(msg)
@@ -177,6 +177,19 @@ func (c *Client) MarshalMsg(msg *Message.Message) ([]byte, error) {
 	return utils.Marshal(msg)
 }
 
+func (c *Client) AddHandlerFunc(api string, handle func(res Responser, msg *Message.Message)) {
+	if api == "" {
+		log.Println("AddHandlerFunc err：api不能为空！")
+		return
+	}
+
+	_, ok := c.HandlerFunc[api]
+	if ok {
+		log.Println("AddHandlerFunc err：api已存在！")
+		return
+	}
+	c.HandlerFunc[api] = handle
+}
 func (c *Client) pushMsg(msg *Message.Message) {
 
 	v := c.PushHanderFun

@@ -17,15 +17,11 @@ func TestClient2(t *testing.T) {
 
 		log.Fatalln(err)
 	}
-	cli.HanderFun["c2test1"] = func(res Responser, msg *Message.Message) {
+
+	cli.AddHandlerFunc("c2test1", func(res Responser, msg *Message.Message) {
 		msg.SetResponseString(200, "client2 success")
 		res.Response(msg)
-	}
-
-	cli.HanderFun["c2test2"] = func(res Responser, msg *Message.Message) {
-		msg.SetResponseString(201, "client2 success")
-		res.Response(msg)
-	}
+	})
 
 	for {
 
