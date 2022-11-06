@@ -11,10 +11,10 @@ import (
 )
 
 type Server struct {
-	Key  string
-	ip   net.IP
-	port int
-
+	Key     string
+	ip      net.IP
+	port    int
+	listen  *net.TCPListener
 	aclList map[string]aclList
 	conns   map[string]connections
 
@@ -33,9 +33,10 @@ type aclList struct {
 	errorConnectNum int
 }
 
-func NewServer(adderss, Key string) *Server {
+func NewServer(adderss, Key string) ServerI {
 
 	ip, port, _ := utils.ParseAdderss(adderss)
+
 	return &Server{
 		Key:                  Key,
 		ip:                   ip,
@@ -46,28 +47,30 @@ func NewServer(adderss, Key string) *Server {
 		HandlerFunc:          map[string]func(msg *Message.Message){},
 		AuthenticationHandle: nil,
 	}
+
 }
 
 func (s *Server) Run() error {
-
-	listen, err := net.ListenTCP("tcp", &net.TCPAddr{s.ip, s.port, ""})
+	var err error
+	var conn *net.TCPConn
+	s.listen, err = net.ListenTCP("tcp", &net.TCPAddr{s.ip, s.port, ""})
 
 	if err != nil {
 		return err
 	}
 
-	defer listen.Close()
+	defer s.listen.Close()
 
 	for {
-		conn, err := listen.AcceptTCP()
-
+		conn, err = s.listen.AcceptTCP()
 		if err != nil {
-			continue
+			break
 		}
 
 		go s.process(conn)
 	}
 
+	return err
 }
 
 func (s *Server) authentication(msg *Message.Message, ip string) error {
@@ -228,4 +231,31 @@ func (c *Server) AddHandlerFunc(api string, handle func(msg *Message.Message)) {
 		return
 	}
 	c.HandlerFunc[api] = handle
+}
+
+func (s *Server) AddAuthenticationHandle(fun func(key, ip string, text []byte) error) {
+	if fun == nil {
+		return
+	}
+	s.AuthenticationHandle = fun
+}
+
+func (s *Server) SetMaxErrorConnectNum(num int) {
+	if num > 0 {
+		s.MaxErrorConnectNum = num
+	}
+}
+
+func (s *Server) Shutdown() {
+	if s.listen == nil {
+		return
+	}
+
+	s.listen.Close()
+
+	for _, c := range s.conns {
+		if c.conn != nil {
+			c.conn.Close()
+		}
+	}
 }

@@ -9,12 +9,10 @@ import (
 
 func TestClient2(t *testing.T) {
 	cli := NewClient(defaultServerAdderss, defaultClientKey+"2")
-	cli.AuthenticationText = []byte(defaultAuthenticationText)
 
 	err := cli.Connect()
 
 	if err != nil {
-
 		log.Fatalln(err)
 	}
 
@@ -30,14 +28,13 @@ func TestClient2(t *testing.T) {
 
 func TestClient1(t *testing.T) {
 	cli := NewClient(defaultServerAdderss, defaultClientKey+"1")
-	//cli.AuthenticationText = []byte(defaultAuthenticationText)
+
 	err := cli.Connect()
 
 	if err != nil {
 
 		log.Fatalln(err)
 	}
-
 	for {
 		msg := Message.NewMsg(defaultClientKey + "1")
 		msg.SetRequestString(defaultClientKey+"2", "c2test1", "hello ?")

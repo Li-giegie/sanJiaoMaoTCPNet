@@ -2,7 +2,6 @@ package sanJiaoMaoTCPNet
 
 import (
 	"errors"
-	"fmt"
 	"github.com/Li-giegie/sanJiaoMaoTCPNet/Message"
 	"github.com/Li-giegie/sanJiaoMaoTCPNet/utils"
 	"io"
@@ -12,19 +11,21 @@ import (
 	"time"
 )
 
-const (
-	Request_ClientType byte = 1
-	Respone_ClientType byte = 2
-)
+const proto_tcp = "tcp"
 
 type Responser interface {
 	Response(mes *Message.Message)
 }
-type Client struct {
-	ip   net.IP
-	prot int
 
-	srcKey string
+type ClientContext struct {
+}
+
+type Client struct {
+	remoteIp   net.IP
+	remotePort int
+	localIP    net.IP
+	localPort  int
+	srcKey     string
 
 	conn *net.TCPConn
 
@@ -38,12 +39,19 @@ type Client struct {
 
 	AuthenticationText []byte
 
-	PushHanderFun func(msg *Message.Message)
+	PushHandlerFun func(msg *Message.Message)
 }
 
-func NewClient(remoteAdderss, srckey string) *Client {
+func NewClient(remoteAdderss, srckey string) ClientI {
 
-	var cli = Client{
+	ip, port, _ := utils.ParseAdderss(remoteAdderss)
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	return &Client{
+		localIP:             net.IP{0, 0, 0, 0},
+		localPort:           r.Intn(53535) + 10000,
+		remoteIp:            ip,
+		remotePort:          port,
 		srcKey:              srckey,
 		TimeOut:             3,
 		HandlerFunc:         map[string]func(res Responser, msg *Message.Message){},
@@ -51,19 +59,23 @@ func NewClient(remoteAdderss, srckey string) *Client {
 		cleanMemoryFragment: 1000,
 		AuthenticationText:  []byte(defaultAuthenticationText),
 	}
-	fmt.Println(remoteAdderss)
-	cli.ip, cli.prot, _ = utils.ParseAdderss(remoteAdderss)
 
-	return &cli
+}
+
+func (c *Client) SetLocalAdderss(address string) error {
+	ip, port, err := utils.ParseAdderss(address)
+	if err != nil {
+		return err
+	}
+	c.localIP, c.localPort = ip, port
+	return nil
 }
 
 func (c *Client) Connect(AuthenticationText ...string) error {
 
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-
 	var err error
 
-	if c.conn, err = net.DialTCP("tcp", &net.TCPAddr{net.IP{0, 0, 0, 0}, r.Intn(30000) + 2000, ""}, &net.TCPAddr{c.ip, c.prot, ""}); err != nil {
+	if c.conn, err = net.DialTCP(proto_tcp, &net.TCPAddr{c.localIP, c.localPort, ""}, &net.TCPAddr{c.remoteIp, c.remotePort, ""}); err != nil {
 		return err
 	}
 
@@ -77,6 +89,7 @@ func (c *Client) Connect(AuthenticationText ...string) error {
 	msg.SetRequestString("Authentication", "Authentication", string(c.AuthenticationText))
 
 	res, err := c.Request(msg)
+
 	if res != nil && res.Body.StateCode == 0 {
 		return errors.New(string(res.Body.Data))
 	}
@@ -85,6 +98,7 @@ func (c *Client) Connect(AuthenticationText ...string) error {
 }
 
 func (c *Client) read() {
+
 	var msg *Message.Message
 	var err error
 
@@ -119,7 +133,10 @@ func (c *Client) read() {
 
 	}
 
-	c.conn.Close()
+	if err = c.conn.Close(); err != nil {
+		log.Println(err)
+	}
+
 }
 
 func (c *Client) Request(message *Message.Message, timeOut ...time.Duration) (*Message.Message, error) {
@@ -190,17 +207,39 @@ func (c *Client) AddHandlerFunc(api string, handle func(res Responser, msg *Mess
 	}
 	c.HandlerFunc[api] = handle
 }
+
 func (c *Client) pushMsg(msg *Message.Message) {
 
-	v := c.PushHanderFun
+	v := c.PushHandlerFun
 
 	if v == nil {
-		log.Println("push message:", msg.String())
+		log.Println("[warning] push message no handler:", msg.String())
 		return
 	}
 
 	v(msg)
 
+}
+
+func (c *Client) AddPushHandlerFunc(fun func(msg *Message.Message)) {
+	if fun == nil {
+		return
+	}
+	c.PushHandlerFun = fun
+}
+
+func (c *Client) SetAuthenticationText(AuthenticationText []byte) {
+	c.AuthenticationText = AuthenticationText
+}
+
+func (c *Client) Close() {
+	if c == nil {
+		return
+	}
+
+	if err := c.conn.Close(); err != nil {
+		log.Println("close err:", err)
+	}
 }
 
 //func (c *Client) request(distKey,distApi string ,data []byte) {
