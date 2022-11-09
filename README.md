@@ -1,4 +1,4 @@
-# 一个简基于Golang 消息头 protobuf 的简单 并发TCP 框架
+# 一个简基于Golang protobuf消息头 的简单 并发TCP 框架
 
 ## 支持客户端请求服务端 就像HTTP那样 基于接口的形式
 
