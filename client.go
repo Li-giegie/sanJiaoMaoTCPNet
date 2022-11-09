@@ -1,248 +1,199 @@
 package sanJiaoMaoTCPNet
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/Li-giegie/sanJiaoMaoTCPNet/Message"
-	"github.com/Li-giegie/sanJiaoMaoTCPNet/utils"
-	"io"
 	"log"
 	"math/rand"
 	"net"
 	"time"
 )
 
-const proto_tcp = "tcp"
-
-type Responser interface {
-	Response(mes *Message.Message)
-}
-
-type ClientContext struct {
+type ClientI interface {
+	SetDefaultSendKey(key string)
+	AddHandlerFunc(api string, handler func(msg *Message.Message, res Message.ReplyMessageI))
+	//SetPushMessageHandler(pushHandlerFunc func(msg *Message.MessageType2,res utils.ReplyMessageI))
+	Connect(authentication ...string) error
+	SendMessage(distKey, distApi string, stateCode int, data []byte, timeOut ...time.Duration) (*Message.Message, error)
+	SendMessageString(distKey, distApi string, stateCode int, data string, timeOut ...time.Duration) (*Message.Message, error)
+	SendMessageJSON(distKey, distApi string, stateCode int, data interface{}, timeOut ...time.Duration) (*Message.Message, error)
+	Close()
+	Run()
 }
 
 type Client struct {
-	remoteIp   net.IP
-	remotePort int
-	localIP    net.IP
-	localPort  int
-	srcKey     string
-
-	conn *net.TCPConn
-
-	TimeOut time.Duration
-
-	HandlerFunc map[string]func(res Responser, msg *Message.Message)
-
-	responeMsg map[int64]chan *Message.Message
-
-	cleanMemoryFragment int
-
-	AuthenticationText []byte
-
-	PushHandlerFun func(msg *Message.Message)
+	key                string
+	laddr              *net.TCPAddr
+	raddr              *net.TCPAddr
+	conn               *net.TCPConn
+	TimeOut            time.Duration
+	replyChan          map[int64]chan *Message.Message
+	handlerFunc        map[string]func(msg *Message.Message, res Message.ReplyMessageI)
+	defaultSendKey     string
+	AutoId             int64
+	pushMessageHandler func(msg *Message.Message, res Message.ReplyMessageI)
+	isClose            bool
 }
 
-func NewClient(remoteAdderss, srckey string) ClientI {
-
-	ip, port, _ := utils.ParseAdderss(remoteAdderss)
+func NewClient(raddr string, key string) ClientI {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	return &Client{
-		localIP:             net.IP{0, 0, 0, 0},
-		localPort:           r.Intn(53535) + 10000,
-		remoteIp:            ip,
-		remotePort:          port,
-		srcKey:              srckey,
-		TimeOut:             3,
-		HandlerFunc:         map[string]func(res Responser, msg *Message.Message){},
-		responeMsg:          map[int64]chan *Message.Message{},
-		cleanMemoryFragment: 1000,
-		AuthenticationText:  []byte(defaultAuthenticationText),
+	var client = Client{key: key,
+		TimeOut:     time.Second * 10,
+		replyChan:   map[int64]chan *Message.Message{},
+		handlerFunc: map[string]func(msg *Message.Message, res Message.ReplyMessageI){},
 	}
+	client.laddr, _ = net.ResolveTCPAddr("tcp", "0.0.0.0:"+fmt.Sprintf("%v", r.Intn(60000)+2000))
 
+	client.raddr, _ = net.ResolveTCPAddr("tcp", raddr)
+
+	return &client
 }
 
-func (c *Client) SetLocalAdderss(address string) error {
-	ip, port, err := utils.ParseAdderss(address)
+func (c *Client) Connect(authentication ...string) error {
+	var err error
+	c.conn, err = net.DialTCP("tcp", c.laddr, c.raddr)
 	if err != nil {
 		return err
 	}
-	c.localIP, c.localPort = ip, port
-	return nil
-}
 
-func (c *Client) Connect(AuthenticationText ...string) error {
-
-	var err error
-
-	if c.conn, err = net.DialTCP(proto_tcp, &net.TCPAddr{c.localIP, c.localPort, ""}, &net.TCPAddr{c.remoteIp, c.remotePort, ""}); err != nil {
-		return err
+	if authentication == nil {
+		authentication = []string{""}
 	}
 
 	go c.read()
 
-	if AuthenticationText != nil {
-		c.AuthenticationText = []byte(AuthenticationText[0])
+	reply, err := c.SendMessageString("", "", 0, authentication[0])
+
+	if err != nil {
+		c.Close()
+		return err
+	}
+	if reply.StateCode == 0 {
+		c.Close()
+		return errors.New(string(reply.Data))
 	}
 
-	msg := Message.NewMsg(c.srcKey)
-	msg.SetRequestString("Authentication", "Authentication", string(c.AuthenticationText))
-
-	res, err := c.Request(msg)
-
-	if res != nil && res.Body.StateCode == 0 {
-		return errors.New(string(res.Body.Data))
-	}
-
-	return err
+	return nil
 }
 
 func (c *Client) read() {
 
-	var msg *Message.Message
-	var err error
-
 	for {
-
-		msg, err = c.UnMarshalMsg(c.conn)
-
+		msg, err := Message.UnPack(c.conn)
 		if err != nil {
-			log.Println("client 解包失败连接断开", err)
-			break
+			log.Println("解包失败：", err)
+			return
 		}
-
-		switch msg.Header.MType {
-		// 响应请求
+		// 请求
+		//fmt.Println(msg.SrcApi,msg.String(),string(msg.Data))
+		switch msg.MType {
 		case 0:
-			hand, ok := c.HandlerFunc[msg.Header.DistApi]
+			reply := Message.NewReplyMsg(msg, c.conn)
+			handler, ok := c.handlerFunc[msg.DistApi]
 			if !ok {
-				msg.SetResponse(303, code[303])
-				c.Response(msg)
+				err = reply.String(301, "在目标客户端找不到处理函数！")
+				fmt.Println(err)
 				continue
 			}
-			go hand(c, msg)
-		// 请求的响应
+			go handler(msg, reply)
 		case 1:
-			res, ok := c.responeMsg[msg.Header.SrcApi]
+			// 请求后的回答
+			reply, ok := c.replyChan[msg.SrcApi]
 			if !ok {
-				c.pushMsg(msg)
+				fmt.Println("chanel :", reply)
+				log.Println("push message:", msg.String(), string(msg.Data))
 				continue
 			}
-			res <- msg
+			reply <- msg
+		default:
+			log.Println("未知消息类型")
 		}
 
 	}
-
-	if err = c.conn.Close(); err != nil {
-		log.Println(err)
-	}
-
 }
 
-func (c *Client) Request(message *Message.Message, timeOut ...time.Duration) (*Message.Message, error) {
-
+func (c *Client) SendMessage(distKey, distApi string, stateCode int, data []byte, timeOut ...time.Duration) (*Message.Message, error) {
+	if distKey == "" {
+		distKey = c.defaultSendKey
+	}
 	if timeOut == nil {
 		timeOut = []time.Duration{c.TimeOut}
 	}
-	var cReq = make(chan *Message.Message)
+	c.AutoId++
 
-	c.responeMsg[message.Header.SrcApi] = cReq
+	var msg = &Message.Message{
+		Header: Message.Header{
+			SrcKey:    c.key,
+			SrcApi:    c.AutoId,
+			DistKey:   distKey,
+			DistApi:   distApi,
+			StateCode: int32(stateCode),
+			DataLen:   uint32(len(data)),
+		},
+		Data: data,
+	}
 
-	mBuf, err := c.MarshalMsg(message)
-
+	buf, err := Message.Pack(msg)
+	if err != nil {
+		return nil, err
+	}
+	var reply = make(chan *Message.Message)
+	c.replyChan[msg.SrcApi] = reply
+	_, err = c.conn.Write(buf)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err = c.conn.Write(mBuf); err != nil {
-		close(cReq)
-		return nil, errors.New("发送消息失败 " + err.Error())
-	}
-
-	var res *Message.Message
-
 	select {
-
-	case res = <-c.responeMsg[message.Header.SrcApi]:
+	case res := <-c.replyChan[msg.SrcApi]:
+		close(c.replyChan[msg.SrcApi])
+		delete(c.replyChan, msg.SrcApi)
 		return res, nil
-	case <-time.After(time.Second * timeOut[0]):
-		return nil, errors.New(" request time out 请求超时")
+	case <-time.After(timeOut[0]):
+		close(c.replyChan[msg.SrcApi])
+		return nil, errors.New("timeOut")
 	}
 
 }
 
-func (c *Client) Response(message *Message.Message) {
+func (c *Client) SendMessageString(distKey, distApi string, stateCode int, data string, timeOut ...time.Duration) (*Message.Message, error) {
+	return c.SendMessage(distKey, distApi, stateCode, []byte(data), timeOut...)
+}
 
-	buf, err := c.MarshalMsg(message)
+func (c *Client) SendMessageJSON(distKey, distApi string, stateCode int, data interface{}, timeOut ...time.Duration) (*Message.Message, error) {
+	buf, err := json.Marshal(data)
 	if err != nil {
-		log.Println("client MarshalMsg err", err)
-		return
+		return nil, err
 	}
-	_, err = c.conn.Write(buf)
-
-	if err != nil {
-		log.Println("client Write err", err)
-		return
-	}
+	return c.SendMessage(distKey, distApi, stateCode, buf, timeOut...)
 }
 
-func (c *Client) UnMarshalMsg(r io.Reader) (*Message.Message, error) {
-	return utils.UnMarshalMsg(r)
-}
-
-func (c *Client) MarshalMsg(msg *Message.Message) ([]byte, error) {
-	return utils.Marshal(msg)
-}
-
-func (c *Client) AddHandlerFunc(api string, handle func(res Responser, msg *Message.Message)) {
-	if api == "" {
-		log.Println("AddHandlerFunc err：api不能为空！")
+func (c *Client) AddHandlerFunc(api string, handler func(msg *Message.Message, res Message.ReplyMessageI)) {
+	_, ok := c.handlerFunc[api]
+	if !ok {
+		c.handlerFunc[api] = handler
 		return
 	}
-
-	_, ok := c.HandlerFunc[api]
-	if ok {
-		log.Println("AddHandlerFunc err：api已存在！")
-		return
-	}
-	c.HandlerFunc[api] = handle
+	log.Println("warning api exits")
 }
 
-func (c *Client) pushMsg(msg *Message.Message) {
+func (c *Client) SetDefaultSendKey(key string) { c.defaultSendKey = key }
 
-	v := c.PushHandlerFun
+//func (c *Client) SetPushMessageHandler(pushHandlerFunc func(msg *Message.MessageType2,res utils.ReplyMessageI))  {
+//	if pushHandlerFunc != nil { c.pushMessageHandler=pushHandlerFunc }
+//}
 
-	if v == nil {
-		log.Println("[warning] push message no handler:", msg.String())
-		return
+func (c *Client) Run() {
+	for !c.isClose {
 	}
-
-	v(msg)
-
-}
-
-func (c *Client) AddPushHandlerFunc(fun func(msg *Message.Message)) {
-	if fun == nil {
-		return
-	}
-	c.PushHandlerFun = fun
-}
-
-func (c *Client) SetAuthenticationText(AuthenticationText []byte) {
-	c.AuthenticationText = AuthenticationText
 }
 
 func (c *Client) Close() {
-	if c == nil {
-		return
+	if c.conn != nil {
+		c.conn.Close()
 	}
-
-	if err := c.conn.Close(); err != nil {
-		log.Println("close err:", err)
-	}
+	c.isClose = true
 }
-
-//func (c *Client) request(distKey,distApi string ,data []byte) {
-//	msg := Message.NewRequestMsg(c.srcKey,distKey,distApi,data)
-//
-//}

@@ -1,261 +1,212 @@
 package sanJiaoMaoTCPNet
 
 import (
-	"errors"
+	"fmt"
 	"github.com/Li-giegie/sanJiaoMaoTCPNet/Message"
-	"github.com/Li-giegie/sanJiaoMaoTCPNet/utils"
-	"io"
 	"log"
 	"net"
-	"time"
 )
 
+type ServerI interface {
+	AddHandleFunc(api string, handle func(msg *Message.Message, reply Message.ReplyMessageI))
+	SetAuthentication(authentication func(ip string, key string, data []byte) (bool, string))
+	Run()
+	Shutdown()
+}
+
 type Server struct {
-	Key     string
-	ip      net.IP
-	port    int
-	listen  *net.TCPListener
-	aclList map[string]aclList
-	conns   map[string]connections
-
-	MaxErrorConnectNum   int
-	AuthenticationHandle func(key, ip string, text []byte) error
-
-	HandlerFunc map[string]func(msg *Message.Message)
+	key            string
+	addr           *net.TCPAddr
+	listen         *net.TCPListener
+	err            error
+	conns          map[string]*Connecter
+	Authentication func(ip string, key string, data []byte) (bool, string)
+	handleFunc     map[string]func(msg *Message.Message, reply Message.ReplyMessageI)
+	isShutdown     bool
 }
 
-type connections struct {
-	conn *net.TCPConn
+// 管理的连接对象
+type Connecter struct {
+	ip    string
+	conn  *net.TCPConn
+	key   string
+	state int
 }
 
-type aclList struct {
-	id              int64
-	errorConnectNum int
-}
-
-func NewServer(adderss, Key string) ServerI {
-
-	ip, port, _ := utils.ParseAdderss(adderss)
-
-	return &Server{
-		Key:                  Key,
-		ip:                   ip,
-		port:                 port,
-		MaxErrorConnectNum:   3,
-		conns:                map[string]connections{},
-		aclList:              map[string]aclList{},
-		HandlerFunc:          map[string]func(msg *Message.Message){},
-		AuthenticationHandle: nil,
+func NewServer(addr string, key ...string) (ServerI, error) {
+	var s = &Server{
+		isShutdown: false,
+		conns:      map[string]*Connecter{},
+		handleFunc: map[string]func(msg *Message.Message, reply Message.ReplyMessageI){},
 	}
 
-}
-
-func (s *Server) Run() error {
-	var err error
-	var conn *net.TCPConn
-	s.listen, err = net.ListenTCP("tcp", &net.TCPAddr{s.ip, s.port, ""})
-
-	if err != nil {
-		return err
+	s.addr, s.err = net.ResolveTCPAddr("tcp", addr)
+	if s.err != nil {
+		return nil, s.err
 	}
 
-	defer s.listen.Close()
+	if key == nil {
+		key = []string{"sanjiaomao"}
+	}
+	s.key = key[0]
+	s.listen, s.err = net.ListenTCP("tcp", s.addr)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s, nil
+}
 
+func (s *Server) Run() {
 	for {
-		conn, err = s.listen.AcceptTCP()
-		if err != nil {
+
+		if s.isShutdown {
+			if s.listen != nil {
+				s.listen.Close()
+			}
+			for _, connecter := range s.conns {
+				if connecter.conn != nil {
+					connecter.conn.Close()
+				}
+				delete(s.conns, connecter.key)
+			}
 			break
 		}
 
-		go s.process(conn)
-	}
-
-	return err
-}
-
-func (s *Server) authentication(msg *Message.Message, ip string) error {
-
-	// 1.检查是否拒绝登录列表
-	v, ok := s.aclList[ip]
-	if !ok {
-		v = aclList{time.Now().UnixNano(), 0}
-		s.aclList[ip] = v
-	}
-	if v.errorConnectNum >= s.MaxErrorConnectNum {
-		return errors.New("服务器拒绝建立连接 ")
-	}
-
-	// 2.检查是否上线
-	_, cok := s.conns[msg.Header.SrcKey]
-	if cok {
-		return errors.New("非法认证 认证失败 此用户以上线")
-	}
-
-	// 3.无认证过程直接通过 有认证过程执行自定义认证过程
-	func1 := s.AuthenticationHandle
-	if func1 == nil {
-		if string(msg.Body.Data) != defaultAuthenticationText {
-			return errors.New("认证失败 服务端无认证处理函数")
+		conn, err := s.listen.AcceptTCP()
+		if err != nil {
+			log.Println(err)
+			break
 		}
-		return nil
+		go s.Read(conn)
 	}
-
-	return func1(msg.Header.SrcKey, ip, msg.Body.Data)
-
+	log.Println("shutdown ----------")
 }
 
-func (s *Server) process(conn *net.TCPConn) {
-	var msg *Message.Message
-	var err error
-	var ip, key string
+func (s *Server) Read(conn *net.TCPConn) {
+	var info = "Authentication success"
 
-	if msg, err = s.UnMarshalMsg(conn); err != nil {
-		log.Println("解析认证消息错误 程序结束！")
+	msg, err := Message.UnPack(conn)
+	var key = msg.SrcKey
+	if err != nil {
+		log.Println("解包失败：", err)
 		conn.Close()
-		delete(s.conns, key)
+		return
+	}
+	reply := Message.NewReplyMsg(msg, conn)
+
+	//根据key查看是否已经认证过
+	_, ok := s.conns[msg.SrcKey]
+	if ok {
+		if err = reply.String(0, "拒绝认证：线上已有用户"); err != nil {
+			log.Println("Authentication reply string :", err)
+		}
+		conn.Close()
+		return
+	}
+	if auth := s.Authentication; auth != nil {
+
+		ok, info = auth(conn.RemoteAddr().String(), msg.SrcKey, msg.Data)
+		if !ok {
+			if err = reply.String(0, info); err != nil {
+				log.Println("Authentication reply string :", err)
+			}
+			conn.Close()
+			return
+		}
+	}
+	// 认证通过 回复一个消息 失败断开连接
+	if err = reply.String(1, info); err != nil {
+		conn.Close()
 		return
 	}
 
-	ip, key = conn.RemoteAddr().String(), msg.Header.SrcKey
-
-	v := s.aclList[ip]
-	v.id = time.Now().UnixNano()
-
-	// 认证失败
-	if err = s.authentication(msg, ip); err != nil {
-		v.errorConnectNum++
-		s.aclList[ip] = v
-		msg.SetResponseString(0, err.Error())
-		s.write(conn, msg)
-		return
+	s.conns[msg.SrcKey] = &Connecter{
+		ip:    conn.RemoteAddr().String(),
+		conn:  conn,
+		key:   msg.DistKey,
+		state: 1,
 	}
 
-	msg.SetResponseString(1, "success")
-	err = s.write(conn, msg)
-	if err != nil {
-		return
-	}
-
-	// 上线
-	v.errorConnectNum = 0
-	s.conns[msg.Header.SrcKey], s.aclList[ip] = connections{conn}, v
-
-	var conns connections
-	var ok bool
-	var tempKey string
+	fmt.Println("认证一个:", s.conns, "key = ", msg.SrcKey)
 	for {
-		msg, err = s.UnMarshalMsg(conn)
+		msg, err = Message.UnPack(conn)
+
 		if err != nil {
+			log.Println("解包失败：", err)
 			break
 		}
-
-		// 服务器处理函数
-		if msg.Header.DistKey == s.Key {
-
-			sf, ok := s.HandlerFunc[msg.Header.DistApi]
+		// 服务端处理API
+		if msg.DistKey == s.key {
+			reply.SetMsg(msg)
+			handler, ok := s.handleFunc[msg.DistApi]
 			if !ok {
-				msg.SetResponse(201, code[201])
-				s.write(conn, msg)
+				reply.String(101, "服务端找不到处理函数！")
 				continue
 			}
-			sf(msg)
-			s.write(conn, msg)
-			continue
-		}
-
-		if msg.Header.MType == 0 {
-			tempKey = msg.Header.DistKey
-		} else {
-			tempKey = msg.Header.SrcKey
-		}
-
-		// 转发到其他客户端
-		conns, ok = s.conns[tempKey]
-		if !ok {
-			msg.SetResponse(301, code[301])
-			s.write(conn, msg)
-			continue
-		}
-		//转发
-		err = s.write(conns.conn, msg)
-		if err != nil {
-			msg.SetResponse(302, code[302])
-			s.write(conn, msg)
+			go handler(msg, reply)
+		} else { //转发消息
+			temKey := msg.DistKey
+			if msg.MType == 1 {
+				temKey = msg.SrcKey
+			}
+			conner, ok := s.conns[temKey]
+			if !ok {
+				reply.SetMsg(msg)
+				err = reply.String(201, "转发消息失败 原因是目的客户端不存在！")
+				if err != nil {
+					log.Println(201, "转发消息失败 原因是目的客户端不存在！", err)
+				}
+				continue
+			}
+			go s.forward(conn, conner.conn, msg)
 		}
 
 	}
 
-	conn.Close()
-	log.Println("off line :key---", key, "ip---", ip)
+	s.CLoseConn(key)
+}
+
+func (s *Server) SetAuthentication(authentication func(ip string, key string, data []byte) (bool, string)) {
+	s.Authentication = authentication
+}
+
+// conn is src conn forwardconn is dist conn
+func (s *Server) forward(conn *net.TCPConn, forwardConn *net.TCPConn, msg *Message.Message) {
+	buf, err := Message.Pack(msg)
+	if err != nil {
+		if err = Message.NewReplyMsg(msg, conn).String(202, "forward Pack err："+err.Error()); err != nil {
+			log.Println("NewReplyMsg forward err", err)
+			s.CLoseConn(msg.SrcKey)
+		}
+		return
+	}
+	_, err = forwardConn.Write(buf)
+	if err != nil {
+		if err = Message.NewReplyMsg(msg, conn).String(203, "forward err："+err.Error()); err != nil {
+			s.CLoseConn(msg.SrcKey)
+		}
+		log.Println("forward err:", err)
+	}
+}
+
+func (s *Server) CLoseConn(key string) {
+	if s.conns[key].conn != nil {
+		s.conns[key].conn.Close()
+	}
+
 	delete(s.conns, key)
+
 }
 
-func (s *Server) write(conn *net.TCPConn, msg *Message.Message) error {
-
-	msgBuf, err := s.MarshalMsg(msg)
-
-	if err != nil {
-		return errors.New("服务端序列化消息失败 :" + err.Error())
-	}
-
-	_, err = conn.Write(msgBuf)
-
-	if err != nil {
-		log.Println("server write err:", err)
-		conn.Close()
-	}
-
-	if msg.Body.StateCode == 0 {
-		conn.Close()
-	}
-	return err
-}
-
-func (c *Server) UnMarshalMsg(r io.Reader) (*Message.Message, error) {
-	return utils.UnMarshalMsg(r)
-}
-
-func (c *Server) MarshalMsg(msg *Message.Message) ([]byte, error) {
-	return utils.Marshal(msg)
-}
-
-func (c *Server) AddHandlerFunc(api string, handle func(msg *Message.Message)) {
-	if api == "" {
-		log.Println("AddHandlerFunc err：api不能为空！")
-		return
-	}
-
-	_, ok := c.HandlerFunc[api]
+func (s *Server) AddHandleFunc(api string, handle func(msg *Message.Message, reply Message.ReplyMessageI)) {
+	_, ok := s.handleFunc[api]
 	if ok {
-		log.Println("AddHandlerFunc err：api已存在！")
+		log.Println("AddHandleFunc err:api exits")
 		return
 	}
-	c.HandlerFunc[api] = handle
+	s.handleFunc[api] = handle
 }
 
-func (s *Server) AddAuthenticationHandle(fun func(key, ip string, text []byte) error) {
-	if fun == nil {
-		return
-	}
-	s.AuthenticationHandle = fun
-}
-
-func (s *Server) SetMaxErrorConnectNum(num int) {
-	if num > 0 {
-		s.MaxErrorConnectNum = num
-	}
-}
-
-func (s *Server) Shutdown() {
-	if s.listen == nil {
-		return
-	}
-
-	s.listen.Close()
-
-	for _, c := range s.conns {
-		if c.conn != nil {
-			c.conn.Close()
-		}
-	}
+func (s Server) Shutdown() {
+	s.isShutdown = true
 }

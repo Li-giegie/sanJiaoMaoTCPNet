@@ -1,13 +1,8 @@
 syntax = "proto3";
 
-package MessageV1;
+package Message;
 
 option go_package = "../Message";
-
-message Message {
-  Header header = 2;
-  Body body = 3;
-}
 
 message Header {
   string srcKey = 1;
@@ -15,9 +10,6 @@ message Header {
   string distKey = 3;
   string distApi = 4;
   int32 MType = 5;
-}
-
-message Body {
-  int32 StateCode = 1;
-  bytes Data = 2;
+  int32 StateCode = 6;
+  uint32 DataLen = 7 ;
 }

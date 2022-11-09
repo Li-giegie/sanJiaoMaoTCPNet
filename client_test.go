@@ -1,50 +1,57 @@
 package sanJiaoMaoTCPNet
 
 import (
+	"fmt"
 	"github.com/Li-giegie/sanJiaoMaoTCPNet/Message"
 	"log"
 	"testing"
 	"time"
 )
 
-func TestClient2(t *testing.T) {
-	cli := NewClient(defaultServerAdderss, defaultClientKey+"2")
-
-	err := cli.Connect()
-
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	cli.AddHandlerFunc("c2test1", func(res Responser, msg *Message.Message) {
-		msg.SetResponseString(200, "client2 success")
-		res.Response(msg)
-	})
-
-	for {
-
-	}
-}
+var i = 1
 
 func TestClient1(t *testing.T) {
-	cli := NewClient(defaultServerAdderss, defaultClientKey+"1")
+	c := NewClient("127.0.0.1:9999", "client1")
 
-	err := cli.Connect()
-
+	err := c.Connect()
 	if err != nil {
-
 		log.Fatalln(err)
 	}
-	for {
-		msg := Message.NewMsg(defaultClientKey + "1")
-		msg.SetRequestString(defaultClientKey+"2", "c2test1", "hello ?")
-		res, err := cli.Request(msg)
-		if err != nil {
-			log.Fatalln("request err:", err)
-		}
-		log.Println(res.String())
 
-		time.Sleep(time.Second * 2)
+	defer c.Close()
+
+	var testBuf = make([]byte, 1024, 1024)
+
+	for i := 0; i < 10000; i++ {
+		res, err := c.SendMessage("client2", "test", 200, testBuf, time.Second*2)
+
+		if err != nil {
+			fmt.Println(i, err, string(res.Data))
+			continue
+		}
+		if i != 9999 {
+			continue
+		}
+		fmt.Println(res.String(), string(res.Data))
 	}
 
+	//c.Run()
+	fmt.Println("Byte:1024B |request num:10000 |test success-------")
+}
+
+func TestClient2(t *testing.T) {
+	c := NewClient("127.0.0.1:9999", "client2")
+
+	c.AddHandlerFunc("test", func(msg *Message.Message, res Message.ReplyMessageI) {
+		//fmt.Println(string(msg.Data))
+		res.String(200, "client2 收到")
+	})
+	err := c.Connect()
+
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	log.Println("connect success----------")
+	c.Run()
 }
