@@ -4,39 +4,45 @@ import (
 	"fmt"
 	"github.com/Li-giegie/sanJiaoMaoTCPNet/Message"
 	"log"
+	"sync"
 	"testing"
 	"time"
 )
 
-var i = 1
+var c ClientI
+
+var sy sync.WaitGroup
 
 func TestClient1(t *testing.T) {
-	c := NewClient("127.0.0.1:9999", "client1")
+
+	n := 10000
+	c = NewClient("127.0.0.1:9999", "client1")
 
 	err := c.Connect()
 	if err != nil {
-		log.Fatalln(err)
+		t.Error(err)
+		return
 	}
 
-	defer c.Close()
+	t1 := time.Now()
+	for i := 0; i < n; i++ {
+		sy.Add(1)
+		go func(j int) {
+			defer sy.Done()
+			var testBuf = make([]byte, 1024, 1024)
 
-	var testBuf = make([]byte, 1024, 1024)
+			res, err := c.SendMessage("client2", "test", 200, testBuf, time.Second*2)
+			if err != nil {
+				t.Error("client sendMessage err:", err, res)
+			}
 
-	for i := 0; i < 10000; i++ {
-		res, err := c.SendMessage("client2", "test", 200, testBuf, time.Second*2)
-
-		if err != nil {
-			fmt.Println(i, err, string(res.Data))
-			continue
-		}
-		if i != 9999 {
-			continue
-		}
-		fmt.Println(res.String(), string(res.Data))
+			if j%n/10 == 0 {
+				log.Println(res, string(res.Data))
+			}
+		}(i)
 	}
-
-	//c.Run()
-	fmt.Println("Byte:1024B |request num:10000 |test success-------")
+	sy.Wait()
+	fmt.Println(n, "次 ", "总耗时 ", time.Since(t1))
 }
 
 func TestClient2(t *testing.T) {

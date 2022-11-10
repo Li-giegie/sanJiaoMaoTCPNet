@@ -1,7 +1,6 @@
 package sanJiaoMaoTCPNet
 
 import (
-	"fmt"
 	"github.com/Li-giegie/sanJiaoMaoTCPNet/Message"
 	"log"
 	"testing"
@@ -14,10 +13,10 @@ func TestServer(t *testing.T) {
 		log.Fatalln("err:", err)
 	}
 	srv.SetAuthentication(func(ip string, key string, data []byte) (bool, string) {
-		return true, "测试拒绝认证"
+		return true, "success"
 	})
 	srv.AddHandleFunc("test", func(msg *Message.Message, reply Message.ReplyMessageI) {
-		fmt.Println("test----", msg.String(), string(msg.Data))
+		//fmt.Println("test----", msg.String(), string(msg.Data))
 		reply.String(200, "server 收到")
 	})
 

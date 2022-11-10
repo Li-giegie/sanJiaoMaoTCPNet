@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,7 @@ type Client struct {
 	AutoId             int64
 	pushMessageHandler func(msg *Message.Message, res Message.ReplyMessageI)
 	isClose            bool
+	mutex              sync.RWMutex
 }
 
 func NewClient(raddr string, key string) ClientI {
@@ -84,7 +86,7 @@ func (c *Client) read() {
 	for {
 		msg, err := Message.UnPack(c.conn)
 		if err != nil {
-			log.Println("解包失败：", err)
+			log.Println("client read msg err：", err)
 			return
 		}
 		// 请求
@@ -102,12 +104,13 @@ func (c *Client) read() {
 		case 1:
 			// 请求后的回答
 			reply, ok := c.replyChan[msg.SrcApi]
+
 			if !ok {
-				fmt.Println("chanel :", reply)
 				log.Println("push message:", msg.String(), string(msg.Data))
 				continue
 			}
 			reply <- msg
+
 		default:
 			log.Println("未知消息类型")
 		}
@@ -141,7 +144,10 @@ func (c *Client) SendMessage(distKey, distApi string, stateCode int, data []byte
 		return nil, err
 	}
 	var reply = make(chan *Message.Message)
+
+	c.mutex.Lock()
 	c.replyChan[msg.SrcApi] = reply
+
 	_, err = c.conn.Write(buf)
 	if err != nil {
 		return nil, err
@@ -151,9 +157,11 @@ func (c *Client) SendMessage(distKey, distApi string, stateCode int, data []byte
 	case res := <-c.replyChan[msg.SrcApi]:
 		close(c.replyChan[msg.SrcApi])
 		delete(c.replyChan, msg.SrcApi)
+		c.mutex.Unlock()
 		return res, nil
 	case <-time.After(timeOut[0]):
 		close(c.replyChan[msg.SrcApi])
+		c.mutex.Unlock()
 		return nil, errors.New("timeOut")
 	}
 
@@ -192,8 +200,11 @@ func (c *Client) Run() {
 }
 
 func (c *Client) Close() {
+
 	if c.conn != nil {
 		c.conn.Close()
+		c.conn.CloseRead()
+		c.conn.CloseWrite()
 	}
 	c.isClose = true
 }

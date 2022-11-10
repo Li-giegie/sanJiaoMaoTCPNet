@@ -1,7 +1,6 @@
 package sanJiaoMaoTCPNet
 
 import (
-	"fmt"
 	"github.com/Li-giegie/sanJiaoMaoTCPNet/Message"
 	"log"
 	"net"
@@ -127,7 +126,7 @@ func (s *Server) Read(conn *net.TCPConn) {
 		state: 1,
 	}
 
-	fmt.Println("认证一个:", s.conns, "key = ", msg.SrcKey)
+	//fmt.Println("认证一个:", s.conns, "key = ", msg.SrcKey)
 	for {
 		msg, err = Message.UnPack(conn)
 
@@ -135,6 +134,7 @@ func (s *Server) Read(conn *net.TCPConn) {
 			log.Println("解包失败：", err)
 			break
 		}
+
 		// 服务端处理API
 		if msg.DistKey == s.key {
 			reply.SetMsg(msg)
@@ -163,7 +163,7 @@ func (s *Server) Read(conn *net.TCPConn) {
 
 	}
 
-	s.CLoseConn(key)
+	s.CLoseConnect(key)
 }
 
 func (s *Server) SetAuthentication(authentication func(ip string, key string, data []byte) (bool, string)) {
@@ -176,22 +176,24 @@ func (s *Server) forward(conn *net.TCPConn, forwardConn *net.TCPConn, msg *Messa
 	if err != nil {
 		if err = Message.NewReplyMsg(msg, conn).String(202, "forward Pack err："+err.Error()); err != nil {
 			log.Println("NewReplyMsg forward err", err)
-			s.CLoseConn(msg.SrcKey)
+			s.CLoseConnect(msg.SrcKey)
 		}
 		return
 	}
 	_, err = forwardConn.Write(buf)
 	if err != nil {
 		if err = Message.NewReplyMsg(msg, conn).String(203, "forward err："+err.Error()); err != nil {
-			s.CLoseConn(msg.SrcKey)
+			s.CLoseConnect(msg.SrcKey)
 		}
 		log.Println("forward err:", err)
 	}
 }
 
-func (s *Server) CLoseConn(key string) {
+func (s *Server) CLoseConnect(key string) {
 	if s.conns[key].conn != nil {
 		s.conns[key].conn.Close()
+		s.conns[key].conn.CloseRead()
+		s.conns[key].conn.CloseWrite()
 	}
 
 	delete(s.conns, key)
