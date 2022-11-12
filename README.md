@@ -6,6 +6,8 @@
 
 # A Simple Concurrent TCP Framework Based on Golang protobuf Message Header
 
+## The server and customer respond and request asynchronously, so there is no need to wait for the last message to be processed New requests and responses can be made at any time.
+
 ## Support the client to request the server, just like HTTP, based on the interface
 
 ## You can also forward the public network request to the intranet client and write your own processing program
@@ -99,6 +101,8 @@ ___
 ## 简体中文
 
 # 一个简基于Golang protobuf消息头 的简单 并发TCP 框架
+
+## 服务端和客户是基于异步进行响应和请求 所有的操作均是异步进行的，所以不需要等待上一条消息是否处理完毕，随时可以进行新的请求和新的响应。
 
 ## 支持客户端请求服务端 就像HTTP那样 基于接口的形式
 
