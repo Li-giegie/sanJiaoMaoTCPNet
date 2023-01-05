@@ -5,7 +5,7 @@ import "google.golang.org/protobuf/proto"
 type MessageI interface {
 	GetHeaderLen() uint32
 	GetHeaderBytes() []byte
-	GetHeader() Header
+	GetHeader() *Header
 	GetDataLen() uint32
 	GetDataBytes() []byte
 }
@@ -36,6 +36,6 @@ func (m *Message) GetDataBytes() []byte {
 	return m.Data
 }
 
-func (m Message) GetHeader() Header {
-	return m.Header
+func (m *Message) GetHeader() *Header {
+	return &m.Header
 }

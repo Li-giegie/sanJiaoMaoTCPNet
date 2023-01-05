@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -23,7 +24,7 @@ type ClientI interface {
 	Close()
 	Run()
 }
-
+type handlerFunc map[string]func(msg *Message.Message, res Message.ReplyMessageI)
 type Client struct {
 	key                string
 	laddr              *net.TCPAddr
@@ -37,13 +38,15 @@ type Client struct {
 	pushMessageHandler func(msg *Message.Message, res Message.ReplyMessageI)
 	isClose            bool
 	mutex              sync.RWMutex
+
+
 }
 
 func NewClient(raddr string, key string) ClientI {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	var client = Client{key: key,
-		TimeOut:     time.Second * 10,
+		TimeOut:     time.Second * 20,
 		replyChan:   map[int64]chan *Message.Message{},
 		handlerFunc: map[string]func(msg *Message.Message, res Message.ReplyMessageI){},
 	}
@@ -102,14 +105,15 @@ func (c *Client) read() {
 			}
 			go handler(msg, reply)
 		case 1:
-			// 请求后的回答
+			c.mutex.RLock()
 			reply, ok := c.replyChan[msg.SrcApi]
 
-			if !ok {
-				log.Println("push message:", msg.String(), string(msg.Data))
+			if !ok  {
+				fmt.Println("push message:", msg.String(), string(msg.Data))
 				continue
 			}
 			reply <- msg
+			c.mutex.RUnlock()
 
 		default:
 			log.Println("未知消息类型")
@@ -125,6 +129,8 @@ func (c *Client) SendMessage(distKey, distApi string, stateCode int, data []byte
 	if timeOut == nil {
 		timeOut = []time.Duration{c.TimeOut}
 	}
+
+	c.mutex.Lock()
 	c.AutoId++
 
 	var msg = &Message.Message{
@@ -139,14 +145,15 @@ func (c *Client) SendMessage(distKey, distApi string, stateCode int, data []byte
 		Data: data,
 	}
 
+	var reply = make(chan *Message.Message)
+
+	c.replyChan[msg.SrcApi] = reply
+	c.mutex.Unlock()
+
 	buf, err := Message.Pack(msg)
 	if err != nil {
 		return nil, err
 	}
-	var reply = make(chan *Message.Message)
-
-	c.mutex.Lock()
-	c.replyChan[msg.SrcApi] = reply
 
 	_, err = c.conn.Write(buf)
 	if err != nil {
@@ -154,15 +161,12 @@ func (c *Client) SendMessage(distKey, distApi string, stateCode int, data []byte
 	}
 
 	select {
-	case res := <-c.replyChan[msg.SrcApi]:
-		close(c.replyChan[msg.SrcApi])
-		delete(c.replyChan, msg.SrcApi)
-		c.mutex.Unlock()
+	case res := <-reply:
+		close(reply)
 		return res, nil
 	case <-time.After(timeOut[0]):
-		close(c.replyChan[msg.SrcApi])
-		c.mutex.Unlock()
-		return nil, errors.New("timeOut")
+		close(reply)
+		return nil, errors.New("timeOut SrcApi: " + strconv.Itoa(int(msg.SrcApi)))
 	}
 
 }
@@ -189,10 +193,6 @@ func (c *Client) AddHandlerFunc(api string, handler func(msg *Message.Message, r
 }
 
 func (c *Client) SetDefaultSendKey(key string) { c.defaultSendKey = key }
-
-//func (c *Client) SetPushMessageHandler(pushHandlerFunc func(msg *Message.MessageType2,res utils.ReplyMessageI))  {
-//	if pushHandlerFunc != nil { c.pushMessageHandler=pushHandlerFunc }
-//}
 
 func (c *Client) Run() {
 	for !c.isClose {
