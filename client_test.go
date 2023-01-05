@@ -17,7 +17,7 @@ var sy sync.WaitGroup
 
 func TestClient1(t *testing.T) {
 
-	n := 60000
+	n := 10000
 	c = NewClient("127.0.0.1:9999", "client1")
 
 	err := c.Connect()

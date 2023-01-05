@@ -114,7 +114,6 @@ func (c *Client) read() {
 			}
 			reply <- msg
 			c.mutex.RUnlock()
-
 		default:
 			log.Println("未知消息类型")
 		}
