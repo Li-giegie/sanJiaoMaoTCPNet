@@ -6,11 +6,14 @@
 ![simple](https://img.shields.io/badge/simple-extend-green)
 ![Concurrency level](https://img.shields.io/badge/Concurrency-level-yellow)
 ![Concurrency level](https://img.shields.io/badge/CToC-mode-red)
-![Concurrency level](https://img.shields.io/badge/CToS-mode-red)
+![Concurrency level](https://img.shields.io/badge/CToS-mode-b)
+
 
 ## 简体中文
 
 # [一个简基于Golang protobuf消息头 的简单 并发TCP 框架](#)
+
+### README.md 文件没有更新最新测试数据
 
 * ### 服务端和客户是基于异步进行响应和请求 所有的操作均是异步进行的，所以不需要等待上一条消息是否处理完毕，随时可以进行新的请求和新的响应。
 
@@ -96,7 +99,8 @@ ___
 
 ```
 
-## English
+## [English](#)
+### README.md file is not updated with the latest test data
 
 # A Simple Concurrent TCP Framework Based on Golang protobuf Message Header
 
